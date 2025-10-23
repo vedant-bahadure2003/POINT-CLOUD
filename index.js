@@ -27,7 +27,7 @@ app.use((req, res, next) => {
 });
 
 backend.get("/", (req, res) => {
-  res.send("backend api is running under /vocoxp/tenant/tenant_backend!");
+  res.send("backend api is running under /backend!");
 });
 
 // Routes
@@ -54,7 +54,7 @@ app.use("/api/equipment-routes", require("./routes/equipmentRoute"));
 app.use("/api/equipment-movements", require("./routes/equipmentMovement"));
 
 // Additional routes
-app.use("/vocoxp/tenant/tenant_backend", backend);
+app.use("/backend", backend);
 app.use("/", backend);
 
 // Error handling middleware
@@ -85,8 +85,6 @@ const startServer = async () => {
     app.listen(PORT, () => {
       console.log(`🚀 Point Cloud Backend Server is running on port ${PORT}`);
       console.log(`📍 Server URL: http://localhost:${PORT}`);
-      console.log(`💚 Health check: http://localhost:${PORT}/health`);
-      console.log(`⏰ Started at: ${new Date().toISOString()}`);
     });
   } catch (error) {
     console.error("❌ Failed to start server:", error);

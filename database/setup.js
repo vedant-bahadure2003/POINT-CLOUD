@@ -30,7 +30,7 @@ const createTables = async () => {
         id INT AUTO_INCREMENT PRIMARY KEY,
         eqp_id VARCHAR(255) NOT NULL UNIQUE,
         mobile VARCHAR(20) NOT NULL,
-        eq_type VARCHAR(255) NOT NULL,
+        eqp_type VARCHAR(255) NOT NULL,
         inserted_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_eqp_id (eqp_id),
         INDEX idx_inserted_on (inserted_on)

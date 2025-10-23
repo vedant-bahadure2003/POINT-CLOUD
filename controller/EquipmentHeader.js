@@ -9,16 +9,16 @@ const {
 // Create new equipment header record
 const createEquipmentHeader = async (req, res) => {
   try {
-    const { mobile, eq_type } = req.body;
+    const { mobile, eqp_type } = req.body;
 
     // Validate required fields
-    if (!mobile || !eq_type) {
+    if (!mobile || !eqp_type) {
       return res
         .status(400)
         .json(
           errorResponse(
             400,
-            "Missing required fields: mobile and eq_type are required",
+            "Missing required fields: mobile and eqp_type are required",
             API_CODES.EQUIPMENT_HEADER.VALIDATION_ERROR
           )
         );
@@ -36,14 +36,14 @@ const createEquipmentHeader = async (req, res) => {
 
     // Insert query
     const insertQuery = `
-      INSERT INTO road_ground_equipment_header_all (eqp_id, mobile, eq_type, inserted_on)
+      INSERT INTO road_ground_equipment_header_all (eqp_id, mobile, eqp_type, inserted_on)
       VALUES (?, ?, ?, ?)
     `;
 
     const [result] = await db.execute(insertQuery, [
       eqp_id,
       mobile,
-      eq_type,
+      eqp_type,
       inserted_on,
     ]);
 
@@ -56,7 +56,7 @@ const createEquipmentHeader = async (req, res) => {
           id: result.insertId,
           eqp_id,
           mobile,
-          eq_type,
+          eqp_type,
           inserted_on,
         },
       });
