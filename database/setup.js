@@ -30,7 +30,7 @@ const createTables = async () => {
         id INT AUTO_INCREMENT PRIMARY KEY,
         eqp_id VARCHAR(255) NOT NULL UNIQUE,
         mobile VARCHAR(20) NOT NULL,
-        roller VARCHAR(255) NOT NULL,
+        eq_type VARCHAR(255) NOT NULL,
         inserted_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_eqp_id (eqp_id),
         INDEX idx_inserted_on (inserted_on)
@@ -40,11 +40,8 @@ const createTables = async () => {
     console.log("✅ Table 'road_ground_equipment_header_all' ready");
 
     // Create equipment_route_lock_details_all table
-    // Drop existing table if it has incorrect schema
-    await db.execute(`DROP TABLE IF EXISTS equipment_route_lock_details_all;`);
-
     const equipmentRouteQuery = `
-      CREATE TABLE equipment_route_lock_details_all (
+      CREATE TABLE IF NOT EXISTS equipment_route_lock_details_all (
         id INT AUTO_INCREMENT PRIMARY KEY,
         route_id VARCHAR(255) NOT NULL UNIQUE,
         eqp_id VARCHAR(255) NOT NULL,
@@ -65,11 +62,8 @@ const createTables = async () => {
     console.log("✅ Table 'equipment_route_lock_details_all' ready");
 
     // Create equipment_movement_details_all table
-    // Drop existing table if it has incorrect schema
-    await db.execute(`DROP TABLE IF EXISTS equipment_movement_details_all;`);
-
     const equipmentMovementQuery = `
-      CREATE TABLE equipment_movement_details_all (
+      CREATE TABLE IF NOT EXISTS equipment_movement_details_all (
         id INT AUTO_INCREMENT PRIMARY KEY,
         route_id VARCHAR(255) NOT NULL,
         eqp_id VARCHAR(255) NOT NULL,

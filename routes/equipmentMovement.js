@@ -14,13 +14,16 @@ router.post("/", createEquipmentMovement);
 // GET /api/equipment-movements - Get all equipment movements
 router.get("/", getAllEquipmentMovements);
 
+// GET /api/equipment-movements/equipment/:eqp_id/route/:route_id - Get movements by equipment ID and route ID
+router.get(
+  "/equipment/:eqp_id/route/:route_id",
+  getEquipmentMovementsByEquipmentId
+);
+
+// GET /api/equipment-movements/group/:group_no - Get movements by group number (specific route first)
+router.get("/group/:group_no", getEquipmentMovementsByGroupNo);
+
 // GET /api/equipment-movements/:route_id - Get equipment movement by route_id
 router.get("/:route_id", getEquipmentMovementById);
-
-// GET /api/equipment-movements/equipment/:eqp_id - Get movements by equipment ID
-router.get("/equipment/:eqp_id", getEquipmentMovementsByEquipmentId);
-
-// GET /api/equipment-movements/group/:group_no - Get movements by group number
-router.get("/group/:group_no", getEquipmentMovementsByGroupNo);
 
 module.exports = router;
