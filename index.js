@@ -3,6 +3,7 @@ const express = require("express");
 const { connectDB, initialize } = require("./database/db");
 
 const app = express();
+const backend = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
@@ -23,6 +24,10 @@ app.use((req, res, next) => {
   } else {
     next();
   }
+});
+
+backend.get("/", (req, res) => {
+  res.send("backend api is running under /vocoxp/tenant/tenant_backend!");
 });
 
 // Routes
@@ -47,6 +52,10 @@ app.get("/health", (req, res) => {
 app.use("/api/equipment-headers", require("./routes/equipmentHeader"));
 app.use("/api/equipment-routes", require("./routes/equipmentRoute"));
 app.use("/api/equipment-movements", require("./routes/equipmentMovement"));
+
+// Additional routes
+app.use("/vocoxp/tenant/tenant_backend", backend);
+app.use("/", backend);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
