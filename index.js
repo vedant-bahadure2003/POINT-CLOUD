@@ -26,12 +26,12 @@ app.use((req, res, next) => {
   }
 });
 
-backend.get("/", (req, res) => {
+backend.get("/backend", (req, res) => {
   res.send("backend api is running under /backend!");
 });
 
 // Routes
-app.get("/", (req, res) => {
+app.get("/backend", (req, res) => {
   res.json({
     message: "Point Cloud Backend API",
     status: "Server is running successfully",
@@ -49,9 +49,12 @@ app.get("/health", (req, res) => {
 });
 
 // API Routes
-app.use("/api/equipment-headers", require("./routes/equipmentHeader"));
-app.use("/api/equipment-routes", require("./routes/equipmentRoute"));
-app.use("/api/equipment-movements", require("./routes/equipmentMovement"));
+app.use("/backend/api/equipment-headers", require("./routes/equipmentHeader"));
+app.use("/backend/api/equipment-routes", require("./routes/equipmentRoute"));
+app.use(
+  "/backend/api/equipment-movements",
+  require("./routes/equipmentMovement")
+);
 
 // Additional routes
 app.use("/backend", backend);
@@ -85,6 +88,8 @@ const startServer = async () => {
     app.listen(PORT, () => {
       console.log(`🚀 Point Cloud Backend Server is running on port ${PORT}`);
       console.log(`📍 Server URL: http://localhost:${PORT}`);
+      console.log(`💚 Health check: http://localhost:${PORT}/health`);
+      console.log(`⏰ Started at: ${new Date().toISOString()}`);
     });
   } catch (error) {
     console.error("❌ Failed to start server:", error);

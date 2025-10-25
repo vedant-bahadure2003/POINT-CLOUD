@@ -10,7 +10,7 @@ const {
 router.post("/", createEquipmentHeader);
 
 // GET /api/equipment-headers - Get all equipment headers
-router.get("/", getAllEquipmentHeaders);
+// router.get("/", getAllEquipmentHeaders);
 
 // GET /api/equipment-headers/:id - Get equipment header by ID
 router.get("/:id", getEquipmentHeaderById);

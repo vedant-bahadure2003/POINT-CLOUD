@@ -21,9 +21,9 @@ router.get(
 );
 
 // GET /api/equipment-movements/group/:group_no - Get movements by group number (specific route first)
-router.get("/group/:group_no", getEquipmentMovementsByGroupNo);
+// router.get("/group/:group_no", getEquipmentMovementsByGroupNo);
 
 // GET /api/equipment-movements/:route_id - Get equipment movement by route_id
-router.get("/:route_id", getEquipmentMovementById);
+// router.get("/:route_id", getEquipmentMovementById);
 
 module.exports = router;
