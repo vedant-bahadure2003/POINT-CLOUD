@@ -11,6 +11,7 @@ const createEquipmentRoute = async (req, res) => {
   try {
     const {
       eqp_id,
+      route_name,
       start_gps,
       end_gps,
       start_km,
@@ -27,6 +28,19 @@ const createEquipmentRoute = async (req, res) => {
           errorResponse(
             400,
             "Missing required field: eqp_id is required",
+            API_CODES.EQUIPMENT_ROUTE.VALIDATION_ERROR
+          )
+        );
+    }
+
+    // Validate route_name if provided
+    if (route_name && typeof route_name !== "string") {
+      return res
+        .status(400)
+        .json(
+          errorResponse(
+            400,
+            "route_name must be a valid string",
             API_CODES.EQUIPMENT_ROUTE.VALIDATION_ERROR
           )
         );
@@ -119,13 +133,14 @@ const createEquipmentRoute = async (req, res) => {
     // Insert query
     const insertQuery = `
       INSERT INTO equipment_route_lock_details_all 
-      (route_id, eqp_id, start_gps, end_gps, start_km, start_chainage, end_km, end_chainage, inserted_on)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (route_id, eqp_id, route_name, start_gps, end_gps, start_km, start_chainage, end_km, end_chainage, inserted_on)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const [result] = await db.execute(insertQuery, [
       route_id,
       eqp_id,
+      route_name || null,
       start_gps || null,
       end_gps || null,
       start_km || null,
@@ -141,6 +156,7 @@ const createEquipmentRoute = async (req, res) => {
         id: result.insertId,
         route_id,
         eqp_id,
+        route_name: route_name || null,
         start_gps: start_gps || null,
         end_gps: end_gps || null,
         start_km: start_km || null,
