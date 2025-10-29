@@ -35,10 +35,12 @@ const distributeCyclesAcrossGroups = (totalCycles, startGroupNo = 1) => {
 
 /**
  * Distribute data objects across field_data columns (max 200 per column)
- * Returns object with field_data1 through field_data10
+ * Returns object with field_data1 through field_data10 and current column info
  */
 const distributeDataAcrossFields = (dataObjects = []) => {
   const fieldData = {};
+  let currentActiveColumn = 1; // Store only the column number
+  let totalObjectsStored = 0;
 
   // Initialize all 10 field_data columns
   for (let i = 1; i <= TOTAL_FIELD_COLUMNS; i++) {
@@ -46,7 +48,12 @@ const distributeDataAcrossFields = (dataObjects = []) => {
   }
 
   if (!Array.isArray(dataObjects) || dataObjects.length === 0) {
-    return fieldData;
+    return {
+      fieldData,
+      currentActiveColumn,
+      totalObjectsStored: 0,
+      isCapacityExceeded: false,
+    };
   }
 
   let currentFieldIndex = 1;
@@ -75,6 +82,7 @@ const distributeDataAcrossFields = (dataObjects = []) => {
 
     currentFieldArray.push(obj);
     objectsInCurrentField++;
+    totalObjectsStored++;
   }
 
   // Store remaining objects in current field
@@ -84,9 +92,60 @@ const distributeDataAcrossFields = (dataObjects = []) => {
   ) {
     fieldData[`field_data${currentFieldIndex}`] =
       JSON.stringify(currentFieldArray);
+    currentActiveColumn = currentFieldIndex; // Store only the number
   }
 
-  return fieldData;
+  const isCapacityExceeded =
+    totalObjectsStored > MAX_OBJECTS_PER_FIELD * TOTAL_FIELD_COLUMNS;
+
+  return {
+    fieldData,
+    currentActiveColumn,
+    totalObjectsStored,
+    isCapacityExceeded,
+  };
+};
+
+/**
+ * Auto-generate group_no based on group_name
+ * Returns a unique group_no for the given group_name, route_id, and eqp_id
+ */
+const getOrCreateGroupNo = async (group_name, route_id, eqp_id) => {
+  try {
+    // First, check if this group_name already exists for this route_id and eqp_id
+    const existingGroupQuery = `
+      SELECT DISTINCT group_no FROM equipment_movement_details_all 
+      WHERE route_id = ? AND eqp_id = ? AND group_name = ?
+      LIMIT 1
+    `;
+    const [existingGroupRows] = await db.execute(existingGroupQuery, [
+      route_id,
+      eqp_id,
+      group_name,
+    ]);
+
+    if (existingGroupRows.length > 0) {
+      // Group name already exists, return existing group_no
+      console.log(`📋 Found existing group_no ${existingGroupRows[0].group_no} for group_name: ${group_name}`);
+      return existingGroupRows[0].group_no;
+    }
+
+    // Group name doesn't exist, generate new group_no
+    // Get the highest group_no for this route_id and eqp_id
+    const maxGroupQuery = `
+      SELECT MAX(group_no) as max_group_no FROM equipment_movement_details_all 
+      WHERE route_id = ? AND eqp_id = ?
+    `;
+    const [maxGroupRows] = await db.execute(maxGroupQuery, [route_id, eqp_id]);
+
+    const nextGroupNo = (maxGroupRows[0].max_group_no || 0) + 1;
+    console.log(`🆕 Generated new group_no ${nextGroupNo} for group_name: ${group_name}`);
+    
+    return nextGroupNo;
+  } catch (error) {
+    console.error("❌ Error generating group_no:", error);
+    throw error;
+  }
 };
 
 /**
@@ -152,39 +211,37 @@ const isGPSMatch = (gps1, gps2, tolerance = 0.001) => {
 };
 
 /**
- * Determine cycle status based on GPS data for a specific cycle
+ * Determine cycle status based on data objects and their type field
  */
 const determineCycleStatus = (dataObjects, routeStartGPS, routeEndGPS) => {
   if (!dataObjects || !Array.isArray(dataObjects) || dataObjects.length === 0) {
-    return "pending";
+    return 1; // pending
   }
 
-  let hasReachedStart = false;
-  let hasReachedEnd = false;
+  let hasStartType = false;
+  let hasPendingType = false;
+  let hasCompletedType = false;
 
-  // Check each data object for start_gps, end_gps
+  // Check type values in data objects
   for (const dataPoint of dataObjects) {
-    // Check if start_gps matches route start_gps
-    if (dataPoint.start_gps) {
-      if (isGPSMatch(dataPoint.start_gps, routeStartGPS)) {
-        hasReachedStart = true;
-      }
-    }
+    const typeValue = parseInt(dataPoint.type);
 
-    // Check if end_gps matches route end_gps
-    if (dataPoint.end_gps) {
-      if (isGPSMatch(dataPoint.end_gps, routeEndGPS)) {
-        hasReachedEnd = true;
-      }
+    if (typeValue === 0) {
+      hasStartType = true;
+    } else if (typeValue === 1) {
+      hasPendingType = true;
+    } else if (typeValue === 2) {
+      hasCompletedType = true;
     }
   }
 
-  if (hasReachedEnd) {
-    return "completed";
-  } else if (hasReachedStart) {
-    return "live";
+  // Determine cycle status based on type values
+  if (hasCompletedType) {
+    return 2; // completed
+  } else if (hasStartType || hasPendingType) {
+    return 0; // live
   } else {
-    return "pending";
+    return 1; // pending
   }
 };
 
@@ -195,13 +252,13 @@ const createEquipmentMovement = async (req, res) => {
       route_id,
       eqp_id,
       cycles, // Total number of cycles (like 6)
+      cycle, // Specific cycle number to create/update (optional)
       current_data_col,
       current_data_count,
-      start_time,
-      end_time,
-      group_no,
+      group_name,
       group_inserted_on,
-      dataObjects, // GPS tracking data for the current cycle
+      current_cycle_status, // Status from frontend (0=live, 1=pending, 2=completed)
+      dataObjects, // Current GPS tracking data with current_lat, current_long, speed, time, type
     } = req.body;
 
     // Validate required fields
@@ -229,14 +286,83 @@ const createEquipmentMovement = async (req, res) => {
         );
     }
 
-    // Validate cycles
-    if (!cycles || isNaN(cycles) || cycles <= 0) {
+    if (!group_name) {
       return res
         .status(400)
         .json(
           errorResponse(
             400,
-            "cycles must be a valid positive number",
+            "Missing required field: group_name is required",
+            API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
+          )
+        );
+    }
+
+    // Validate cycles (optional, defaults to 6)
+    const totalCyclesPerGroup = cycles ? parseInt(cycles) : 6; // Default to 6 cycles per group
+
+    if (cycles && (isNaN(cycles) || cycles <= 0)) {
+      return res
+        .status(400)
+        .json(
+          errorResponse(
+            400,
+            "cycles must be a valid positive number if provided (defaults to 6)",
+            API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
+          )
+        );
+    }
+
+    // Validate cycle if provided
+    if (cycle !== undefined && cycle !== null) {
+      if (isNaN(cycle) || cycle <= 0) {
+        return res
+          .status(400)
+          .json(
+            errorResponse(
+              400,
+              "cycle must be a valid positive number",
+              API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
+            )
+          );
+      }
+
+      // Validate cycle is within bounds
+      if (cycle > totalCyclesPerGroup) {
+        return res
+          .status(400)
+          .json(
+            errorResponse(
+              400,
+              `cycle cannot be greater than total cycles (${totalCyclesPerGroup})`,
+              API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
+            )
+          );
+      }
+    }
+
+    // Validate current_cycle_status
+    if (current_cycle_status === undefined || current_cycle_status === null) {
+      return res
+        .status(400)
+        .json(
+          errorResponse(
+            400,
+            "Missing required field: current_cycle_status is required",
+            API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
+          )
+        );
+    }
+
+    // Validate current_cycle_status values
+    const validStatuses = [0, 1, 2]; // 0=live, 1=pending, 2=completed
+    if (!validStatuses.includes(parseInt(current_cycle_status))) {
+      return res
+        .status(400)
+        .json(
+          errorResponse(
+            400,
+            "current_cycle_status must be one of: 0 (live), 1 (pending), 2 (completed)",
             API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
           )
         );
@@ -249,7 +375,7 @@ const createEquipmentMovement = async (req, res) => {
         .json(
           errorResponse(
             400,
-            "dataObjects must be a valid array containing start_gps, start_time, end_gps, end_time",
+            "dataObjects must be a valid array containing lat, lon, speed, time, and type",
             API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
           )
         );
@@ -258,13 +384,126 @@ const createEquipmentMovement = async (req, res) => {
     // Validate dataObjects structure
     for (let i = 0; i < dataObjects.length; i++) {
       const dataObj = dataObjects[i];
-      if (!dataObj.start_gps && !dataObj.end_gps) {
+
+      // Validate required fields
+      if (dataObj.lat === undefined || dataObj.lat === null) {
         return res
           .status(400)
           .json(
             errorResponse(
               400,
-              `dataObjects[${i}] must contain at least start_gps or end_gps`,
+              `dataObjects[${i}] must contain lat`,
+              API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
+            )
+          );
+      }
+
+      if (dataObj.lon === undefined || dataObj.lon === null) {
+        return res
+          .status(400)
+          .json(
+            errorResponse(
+              400,
+              `dataObjects[${i}] must contain lon`,
+              API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
+            )
+          );
+      }
+
+      if (dataObj.speed === undefined || dataObj.speed === null) {
+        return res
+          .status(400)
+          .json(
+            errorResponse(
+              400,
+              `dataObjects[${i}] must contain speed`,
+              API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
+            )
+          );
+      }
+
+      if (!dataObj.time) {
+        return res
+          .status(400)
+          .json(
+            errorResponse(
+              400,
+              `dataObjects[${i}] must contain time`,
+              API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
+            )
+          );
+      }
+
+      if (dataObj.type === undefined || dataObj.type === null) {
+        return res
+          .status(400)
+          .json(
+            errorResponse(
+              400,
+              `dataObjects[${i}] must contain type (0=start, 1=pending, 2=completed)`,
+              API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
+            )
+          );
+      }
+
+      // Validate data types
+      if (isNaN(parseFloat(dataObj.lat))) {
+        return res
+          .status(400)
+          .json(
+            errorResponse(
+              400,
+              `dataObjects[${i}].lat must be a valid number`,
+              API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
+            )
+          );
+      }
+
+      if (isNaN(parseFloat(dataObj.lon))) {
+        return res
+          .status(400)
+          .json(
+            errorResponse(
+              400,
+              `dataObjects[${i}].lon must be a valid number`,
+              API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
+            )
+          );
+      }
+
+      if (isNaN(parseFloat(dataObj.speed))) {
+        return res
+          .status(400)
+          .json(
+            errorResponse(
+              400,
+              `dataObjects[${i}].speed must be a valid number`,
+              API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
+            )
+          );
+      }
+
+      if (isNaN(Date.parse(dataObj.time))) {
+        return res
+          .status(400)
+          .json(
+            errorResponse(
+              400,
+              `dataObjects[${i}].time must be a valid date/time`,
+              API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
+            )
+          );
+      }
+
+      // Validate type is 0, 1, or 2
+      const typeValue = parseInt(dataObj.type);
+      if (![0, 1, 2].includes(typeValue)) {
+        return res
+          .status(400)
+          .json(
+            errorResponse(
+              400,
+              `dataObjects[${i}].type must be 0 (start), 1 (pending), or 2 (completed)`,
               API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
             )
           );
@@ -272,13 +511,13 @@ const createEquipmentMovement = async (req, res) => {
     }
 
     // Validate numeric fields if provided
-    if (current_data_col && typeof current_data_col !== "string") {
+    if (current_data_col && (isNaN(current_data_col) || current_data_col < 1 || current_data_col > 10)) {
       return res
         .status(400)
         .json(
           errorResponse(
             400,
-            "current_data_col must be a valid string",
+            "current_data_col must be a valid number between 1 and 10",
             API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
           )
         );
@@ -296,47 +535,14 @@ const createEquipmentMovement = async (req, res) => {
         );
     }
 
-    // Validate time fields if provided
-    if (
-      start_time &&
-      !(start_time instanceof Date) &&
-      isNaN(Date.parse(start_time))
-    ) {
+    // Validate group_name
+    if (group_name && typeof group_name !== "string") {
       return res
         .status(400)
         .json(
           errorResponse(
             400,
-            "start_time must be a valid date/time",
-            API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
-          )
-        );
-    }
-
-    if (
-      end_time &&
-      !(end_time instanceof Date) &&
-      isNaN(Date.parse(end_time))
-    ) {
-      return res
-        .status(400)
-        .json(
-          errorResponse(
-            400,
-            "end_time must be a valid date/time",
-            API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
-          )
-        );
-    }
-
-    // Validate group_no if provided
-    if (group_no && isNaN(group_no)) {
-      return res
-        .status(400)
-        .json(
-          errorResponse(
-            400,
-            "group_no must be a valid number",
+            "group_name must be a valid string",
             API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
           )
         );
@@ -361,6 +567,24 @@ const createEquipmentMovement = async (req, res) => {
 
     // Current timestamp for inserted_on
     const inserted_on = new Date();
+
+    // Auto-generate group_no based on group_name
+    let group_no;
+    try {
+      group_no = await getOrCreateGroupNo(group_name, route_id, eqp_id);
+      console.log(`🔢 Auto-generated group_no: ${group_no} for group_name: ${group_name}`);
+    } catch (error) {
+      console.error("❌ Error auto-generating group_no:", error);
+      return res
+        .status(500)
+        .json(
+          errorResponse(
+            500,
+            "Error auto-generating group number",
+            API_CODES.EQUIPMENT_MOVEMENT.INTERNAL_ERROR
+          )
+        );
+    }
 
     // Fetch route data from equipment_route_lock_details_all table
     let routeData = null;
@@ -413,21 +637,39 @@ const createEquipmentMovement = async (req, res) => {
     console.log(
       "📦 Processing movement data:",
       dataObjects.length,
-      "data objects"
+      "data objects with lat, lon, speed, time, type"
     );
-    const fieldDataDistribution = distributeDataAcrossFields(dataObjects);
+    console.log(
+      `🎯 Target cycle: ${
+        cycle !== undefined ? `${cycle} (specified)` : "auto-determined"
+      }`
+    );
+    const distributionResult = distributeDataAcrossFields(dataObjects);
+    const fieldDataDistribution = distributionResult.fieldData;
+    const activeColumn = distributionResult.currentActiveColumn;
+    const totalStored = distributionResult.totalObjectsStored;
+
     console.log(
       "📊 Field data distribution:",
       Object.keys(fieldDataDistribution).filter(
         (key) => fieldDataDistribution[key] !== null
       )
     );
+    console.log(
+      `📍 Current active column: ${activeColumn}, Total objects stored: ${totalStored}`
+    );
+
+    if (distributionResult.isCapacityExceeded) {
+      console.warn(
+        "⚠️ Data capacity exceeded! Some objects may not be stored."
+      );
+    }
 
     // Check for existing cycles for this equipment and route
     const existingCyclesQuery = `
-      SELECT cycle, status FROM equipment_movement_details_all 
+      SELECT cycle, current_cycle_status, group_no FROM equipment_movement_details_all 
       WHERE route_id = ? AND eqp_id = ? 
-      ORDER BY cycle DESC 
+      ORDER BY group_no DESC, cycle DESC 
       LIMIT 1
     `;
     const [existingCycles] = await db.execute(existingCyclesQuery, [
@@ -437,63 +679,184 @@ const createEquipmentMovement = async (req, res) => {
 
     let currentCycleNumber = 1;
     let shouldCreateNewCycle = true;
+    let currentGroupNumber = 1;
 
-    if (existingCycles.length > 0) {
-      const lastCycle = existingCycles[0];
-      currentCycleNumber = lastCycle.cycle;
+    // If user provided a specific cycle number, use it directly
+    if (cycle !== undefined && cycle !== null) {
+      const specifiedCycle = parseInt(cycle);
+      console.log(`🔍 User specified cycle: ${specifiedCycle}`);
 
-      console.log(
-        `📋 Found existing cycle ${currentCycleNumber} with status: ${lastCycle.status}`
-      );
+      // Determine group number - use auto-generated group_no
+      currentGroupNumber = group_no;
 
-      // If last cycle is completed, create next cycle
-      if (lastCycle.status === "completed") {
-        currentCycleNumber += 1;
+      // Check if this cycle already exists for the given route_id, eqp_id, and group_no
+      const existingCycleQuery = `
+        SELECT cycle, current_cycle_status, group_no FROM equipment_movement_details_all 
+        WHERE route_id = ? AND eqp_id = ? AND cycle = ? AND group_no = ?
+        LIMIT 1
+      `;
+      const [existingCycleRows] = await db.execute(existingCycleQuery, [
+        route_id,
+        eqp_id,
+        specifiedCycle,
+        currentGroupNumber,
+      ]);
+
+      if (existingCycleRows.length > 0) {
+        // Cycle exists, update it
+        const existingCycle = existingCycleRows[0];
+        currentCycleNumber = specifiedCycle;
+        shouldCreateNewCycle = false;
+        console.log(
+          `🔄 Updating existing cycle ${specifiedCycle} in group ${currentGroupNumber}`
+        );
+      } else {
+        // Cycle doesn't exist, create new one
+        currentCycleNumber = specifiedCycle;
         shouldCreateNewCycle = true;
         console.log(
-          `✅ Last cycle completed, creating cycle ${currentCycleNumber}`
+          `🆕 Creating new cycle ${specifiedCycle} in group ${currentGroupNumber}`
         );
+      }
+    }
+    // If user wants to work with the auto-generated group_no, validate it
+    else if (group_no) {
+      console.log(`🔍 Using auto-generated group_no: ${group_no}, validating...`);
+
+      // Check if the specified group already exists and is completed
+      const specifiedGroupQuery = `
+        SELECT cycle, current_cycle_status FROM equipment_movement_details_all 
+        WHERE route_id = ? AND eqp_id = ? AND group_no = ?
+        ORDER BY cycle DESC
+        LIMIT 1
+      `;
+      const [specifiedGroupCycles] = await db.execute(specifiedGroupQuery, [
+        route_id,
+        eqp_id,
+        group_no,
+      ]);
+
+      if (specifiedGroupCycles.length > 0) {
+        const lastCycleInGroup = specifiedGroupCycles[0];
+
+        console.log(
+          `📊 Group ${group_no} last cycle: ${lastCycleInGroup.cycle}, status: ${lastCycleInGroup.current_cycle_status}`
+        );
+
+        // If group has completed all cycles, reject the request
+        if (
+          lastCycleInGroup.cycle >= totalCyclesPerGroup &&
+          lastCycleInGroup.current_cycle_status === 2 // completed
+        ) {
+          return res
+            .status(400)
+            .json(
+              errorResponse(
+                400,
+                `Group ${group_no} has already completed all ${totalCyclesPerGroup} cycles.`,
+                API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
+              )
+            );
+        }
+
+        // If group exists but not completed, continue with that group
+        currentGroupNumber = group_no;
+        if (lastCycleInGroup.current_cycle_status === 2) {
+          // completed
+          currentCycleNumber = lastCycleInGroup.cycle + 1;
+          shouldCreateNewCycle = true;
+        } else {
+          currentCycleNumber = lastCycleInGroup.cycle;
+          shouldCreateNewCycle = false;
+        }
+
+        console.log(
+          `✅ Using auto-generated group ${group_no}, cycle ${currentCycleNumber}, shouldCreate: ${shouldCreateNewCycle}`
+        );
+      } else {
+        // New group specified, start with cycle 1
+        currentGroupNumber = group_no;
+        currentCycleNumber = 1;
+        shouldCreateNewCycle = true;
+        console.log(`🆕 Creating new group ${group_no} starting with cycle 1`);
+      }
+    } else if (existingCycles.length > 0) {
+      // Auto-determine group logic (existing behavior)
+      const lastCycle = existingCycles[0];
+      currentCycleNumber = lastCycle.cycle;
+      currentGroupNumber = lastCycle.group_no;
+
+      console.log(
+        `📋 Found existing cycle ${currentCycleNumber} in group ${currentGroupNumber} with status: ${lastCycle.current_cycle_status}`
+      );
+
+      // If last cycle is completed, determine next action
+      if (lastCycle.current_cycle_status === 2) {
+        // completed
+
+        // If we've completed all cycles in current group, start new group
+        if (currentCycleNumber >= totalCyclesPerGroup) {
+          currentGroupNumber += 1;
+          currentCycleNumber = 1;
+          shouldCreateNewCycle = true;
+          console.log(
+            `🎉 All ${totalCyclesPerGroup} cycles completed in group ${
+              currentGroupNumber - 1
+            }. Starting new group ${currentGroupNumber} with cycle 1`
+          );
+        } else {
+          // Move to next cycle in same group
+          currentCycleNumber += 1;
+          shouldCreateNewCycle = true;
+          console.log(
+            `✅ Last cycle completed, creating cycle ${currentCycleNumber} in group ${currentGroupNumber}`
+          );
+        }
       } else {
         // Update existing cycle with new GPS data
         shouldCreateNewCycle = false;
         console.log(
-          `🔄 Updating existing cycle ${currentCycleNumber} with new GPS data`
+          `🔄 Updating existing cycle ${currentCycleNumber} in group ${currentGroupNumber} with new GPS data`
         );
       }
     } else {
-      console.log("🆕 No existing cycles found, creating first cycle");
+      console.log(
+        "🆕 No existing cycles found, creating first cycle in first group"
+      );
     }
 
-    // Validate we haven't exceeded total cycles
-    const totalCycles = parseInt(cycles);
-    if (currentCycleNumber > totalCycles) {
+    // Validate cycle number within group bounds (only if cycle wasn't explicitly specified)
+    if (
+      currentCycleNumber > totalCyclesPerGroup &&
+      shouldCreateNewCycle &&
+      cycle === undefined
+    ) {
+      // This should not happen with the new logic, but keeping as safety check
       return res
         .status(400)
         .json(
           errorResponse(
             400,
-            `All ${totalCycles} cycles have been completed. Cannot create more cycles.`,
+            `Invalid cycle number ${currentCycleNumber}. Maximum cycles per group is ${totalCyclesPerGroup}.`,
             API_CODES.EQUIPMENT_MOVEMENT.VALIDATION_ERROR
           )
         );
     }
 
-    // Determine cycle status based on GPS data
-    const cycleStatus = determineCycleStatus(
-      dataObjects,
-      routeData.start_gps,
-      routeData.end_gps
-    );
+    // Use the current_cycle_status provided from frontend
     console.log(
-      `📍 Cycle ${currentCycleNumber} status determined:`,
-      cycleStatus
+      `📍 Cycle ${currentCycleNumber} in group ${currentGroupNumber} status from frontend:`,
+      current_cycle_status
     );
     console.log(`🎯 Route start GPS:`, routeData.start_gps);
     console.log(`🏁 Route end GPS:`, routeData.end_gps);
+    console.log(
+      `📊 Data objects type summary:`,
+      dataObjects.map((obj) => `type: ${obj.type}`)
+    );
 
-    // Calculate group number for this cycle (6 cycles per group)
-    const cycleGroupNo =
-      group_no || Math.ceil(currentCycleNumber / MAX_CYCLES_PER_GROUP);
+    // Calculate group number for this cycle (use determined group number or provided one)
+    const cycleGroupNo = currentGroupNumber;
 
     if (shouldCreateNewCycle) {
       // Create new cycle
@@ -503,25 +866,38 @@ const createEquipmentMovement = async (req, res) => {
 
       const insertQuery = `
         INSERT INTO equipment_movement_details_all 
-        (route_id, eqp_id, cycle, current_data_col, current_data_count, start_gps, start_time, end_gps, end_time, group_no, group_inserted_on, field_data1, field_data2, field_data3, field_data4, field_data5, field_data6, field_data7, field_data8, field_data9, field_data10, status, inserted_on)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (route_id, eqp_id, cycle, current_data_col, current_data_count, start_gps, start_time, end_gps, end_time, group_no, group_name, group_inserted_on, field_data1, field_data2, field_data3, field_data4, field_data5, field_data6, field_data7, field_data8, field_data9, field_data10, current_cycle_status, inserted_on)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
 
       const groupInsertedOn = group_inserted_on
         ? new Date(group_inserted_on)
         : inserted_on;
 
+      // Set start_time to current time when cycle starts
+      const cycleStartTime = inserted_on;
+
+      // Set end_time only if cycle is completed
+      const cycleEndTime = current_cycle_status === 2 ? inserted_on : null; // 2 = completed
+
+      console.log(
+        `⏰ Cycle timing - Start: ${cycleStartTime}, End: ${
+          cycleEndTime || "Not completed yet"
+        }`
+      );
+
       const insertParams = [
         route_id,
         eqp_id,
         currentCycleNumber,
-        current_data_col || null,
-        dataObjects.length, // Use actual count of objects in dataObjects array
+        activeColumn, // Use the active column from distribution result
+        totalStored, // Use total stored count instead of dataObjects.length
         routeData.start_gps || null,
-        start_time ? new Date(start_time) : null,
+        cycleStartTime, // Always set start_time when creating new cycle
         routeData.end_gps || null,
-        end_time ? new Date(end_time) : null,
+        cycleEndTime, // Set end_time only if cycle is completed
         cycleGroupNo,
+        group_name || null,
         groupInsertedOn,
         fieldDataDistribution.field_data1 || null,
         fieldDataDistribution.field_data2 || null,
@@ -533,25 +909,25 @@ const createEquipmentMovement = async (req, res) => {
         fieldDataDistribution.field_data8 || null,
         fieldDataDistribution.field_data9 || null,
         fieldDataDistribution.field_data10 || null,
-        cycleStatus,
+        parseInt(current_cycle_status),
         inserted_on,
       ];
 
       console.log(
-        `📊 Creating cycle ${currentCycleNumber} with status: ${cycleStatus}`
+        `📊 Creating cycle ${currentCycleNumber} with status: ${current_cycle_status}`
       );
       console.log("📋 Insert parameters:", {
         route_id,
         eqp_id,
         cycle: currentCycleNumber,
-        current_data_col,
-        current_data_count: dataObjects.length, // Actual count of objects
+        current_data_col: activeColumn,
+        current_data_count: totalStored,
         start_gps: routeData.start_gps,
-        start_time,
+        start_time: cycleStartTime,
         end_gps: routeData.end_gps,
-        end_time,
+        end_time: cycleEndTime,
         group_no: cycleGroupNo,
-        status: cycleStatus,
+        status: current_cycle_status,
         field_data1_length: fieldDataDistribution.field_data1
           ? fieldDataDistribution.field_data1.length
           : 0,
@@ -566,29 +942,42 @@ const createEquipmentMovement = async (req, res) => {
         );
 
         let nextCycleMessage = "";
-        if (cycleStatus === "completed" && currentCycleNumber < totalCycles) {
+        if (
+          current_cycle_status === 2 && // completed
+          currentCycleNumber < totalCyclesPerGroup
+        ) {
           nextCycleMessage = ` Next cycle (${
             currentCycleNumber + 1
           }) will be created on next data submission.`;
+        } else if (
+          current_cycle_status === 2 && // completed
+          currentCycleNumber >= totalCyclesPerGroup
+        ) {
+          nextCycleMessage = ` Group ${cycleGroupNo} completed! Next data submission will start group ${
+            cycleGroupNo + 1
+          } with cycle 1.`;
         }
 
         return res.status(201).json(
           successResponse(
             201,
-            `Equipment movement cycle ${currentCycleNumber} created successfully.${nextCycleMessage}`,
+            `Equipment movement cycle ${currentCycleNumber} in group ${cycleGroupNo} created successfully.${nextCycleMessage}`,
             {
               id: result.insertId,
               route_id,
               eqp_id,
               cycle: currentCycleNumber,
-              status: cycleStatus,
+              status: current_cycle_status,
               group_no: cycleGroupNo,
-              total_cycles: totalCycles,
-              remaining_cycles: totalCycles - currentCycleNumber,
+              total_cycles: totalCyclesPerGroup,
+              // remaining_cycles_in_group:
+              //   totalCyclesPerGroup - currentCycleNumber,
               data_objects_saved: dataObjects.length,
-              current_data_count: dataObjects.length,
-              can_create_next:
-                cycleStatus === "completed" && currentCycleNumber < totalCycles,
+              current_data_count: totalStored,
+              current_data_col: activeColumn,
+              can_create_next_cycle:
+                current_cycle_status === 2 && // completed
+                currentCycleNumber < totalCyclesPerGroup,
               created_on: inserted_on,
             },
             API_CODES.EQUIPMENT_MOVEMENT.CREATE_SUCCESS
@@ -615,15 +1004,16 @@ const createEquipmentMovement = async (req, res) => {
       const getExistingDataQuery = `
         SELECT field_data1, field_data2, field_data3, field_data4, field_data5, 
                field_data6, field_data7, field_data8, field_data9, field_data10,
-               current_data_count
+               current_data_count, start_time, end_time, group_no
         FROM equipment_movement_details_all 
-        WHERE route_id = ? AND eqp_id = ? AND cycle = ?
+        WHERE route_id = ? AND eqp_id = ? AND cycle = ? AND group_no = ?
       `;
 
       const [existingDataRows] = await db.execute(getExistingDataQuery, [
         route_id,
         eqp_id,
         currentCycleNumber,
+        currentGroupNumber,
       ]);
 
       if (existingDataRows.length === 0) {
@@ -659,27 +1049,46 @@ const createEquipmentMovement = async (req, res) => {
         }
       }
 
-      console.log(
-        `📦 Found ${allExistingGPSData.length} existing GPS data points`
-      );
-      console.log(`➕ Adding ${dataObjects.length} new GPS data points`);
-
-      // Combine existing data with new data
+      console.log(`📦 Found ${allExistingGPSData.length} existing data points`);
+      console.log(`➕ Adding ${dataObjects.length} new data points`); // Combine existing data with new data
       const combinedGPSData = [...allExistingGPSData, ...dataObjects];
-      console.log(`📊 Total GPS data points: ${combinedGPSData.length}`);
+      console.log(`📊 Total data points: ${combinedGPSData.length}`);
 
       // Redistribute combined data across field_data columns
-      const combinedFieldDataDistribution =
+      const combinedDistributionResult =
         distributeDataAcrossFields(combinedGPSData);
+      const combinedFieldDataDistribution =
+        combinedDistributionResult.fieldData;
+      const combinedActiveColumn =
+        combinedDistributionResult.currentActiveColumn;
+      const combinedTotalStored = combinedDistributionResult.totalObjectsStored;
 
-      // Calculate new data count - total number of objects in dataObjects arrays
-      const newDataCount = combinedGPSData.length;
+      console.log(
+        `📍 Combined active column: ${combinedActiveColumn}, Total stored: ${combinedTotalStored}`
+      );
 
-      // Determine cycle status based on all GPS data (existing + new)
-      const updatedCycleStatus = determineCycleStatus(
-        combinedGPSData,
-        routeData.start_gps,
-        routeData.end_gps
+      if (combinedDistributionResult.isCapacityExceeded) {
+        console.warn(
+          "⚠️ Combined data capacity exceeded! Some objects may not be stored."
+        );
+      }
+
+      // Use the current_cycle_status provided from frontend
+      console.log(`📍 Using status from frontend: ${current_cycle_status}`);
+
+      // Get existing start_time to preserve it
+      const existingStartTime = existingDataRows[0].start_time || inserted_on;
+
+      // Set end_time only if cycle is being completed
+      const cycleEndTime =
+        current_cycle_status === 2 // completed
+          ? inserted_on
+          : existingDataRows[0].end_time;
+
+      console.log(
+        `⏰ Cycle timing - Start: ${existingStartTime} (preserved), End: ${
+          cycleEndTime || "Not completed yet"
+        }`
       );
 
       const updateQuery = `
@@ -687,15 +1096,15 @@ const createEquipmentMovement = async (req, res) => {
         SET current_data_col = ?, current_data_count = ?, start_time = ?, end_time = ?, 
             field_data1 = ?, field_data2 = ?, field_data3 = ?, field_data4 = ?, field_data5 = ?, 
             field_data6 = ?, field_data7 = ?, field_data8 = ?, field_data9 = ?, field_data10 = ?, 
-            status = ?, inserted_on = ?
-        WHERE route_id = ? AND eqp_id = ? AND cycle = ?
+            current_cycle_status = ?, group_name = ?, inserted_on = ?
+        WHERE route_id = ? AND eqp_id = ? AND cycle = ? AND group_no = ?
       `;
 
       const updateParams = [
-        current_data_col || null,
-        newDataCount,
-        start_time ? new Date(start_time) : null,
-        end_time ? new Date(end_time) : null,
+        combinedActiveColumn, // Use combined active column
+        combinedTotalStored, // Use combined total stored count
+        existingStartTime, // Preserve existing start_time
+        cycleEndTime, // Set end_time only when completed
         combinedFieldDataDistribution.field_data1 || null,
         combinedFieldDataDistribution.field_data2 || null,
         combinedFieldDataDistribution.field_data3 || null,
@@ -706,33 +1115,34 @@ const createEquipmentMovement = async (req, res) => {
         combinedFieldDataDistribution.field_data8 || null,
         combinedFieldDataDistribution.field_data9 || null,
         combinedFieldDataDistribution.field_data10 || null,
-        updatedCycleStatus,
+        parseInt(current_cycle_status),
+        group_name || null,
         inserted_on,
         route_id,
         eqp_id,
         currentCycleNumber,
+        currentGroupNumber,
       ];
 
       console.log(
-        `📊 Updating cycle ${currentCycleNumber} with status: ${updatedCycleStatus}`
+        `📊 Updating cycle ${currentCycleNumber} with status: ${current_cycle_status}`
       );
       console.log("📋 Update parameters:", {
         route_id,
         eqp_id,
         cycle: currentCycleNumber,
-        current_data_col,
-        current_data_count: newDataCount,
-        existing_gps_points: allExistingGPSData.length,
-        new_gps_points: dataObjects.length,
-        total_gps_points: combinedGPSData.length,
-        start_time,
-        end_time,
-        status: updatedCycleStatus,
+        current_data_col: combinedActiveColumn,
+        current_data_count: combinedTotalStored,
+        existing_data_points: allExistingGPSData.length,
+        new_data_points: dataObjects.length,
+        total_data_points: combinedGPSData.length,
+        start_time: existingStartTime,
+        end_time: cycleEndTime,
+        status: current_cycle_status,
         field_data1_length: combinedFieldDataDistribution.field_data1
           ? combinedFieldDataDistribution.field_data1.length
           : 0,
       });
-
       const [result] = await db.execute(updateQuery, updateParams);
       console.log("📈 Update result:", result);
 
@@ -741,33 +1151,42 @@ const createEquipmentMovement = async (req, res) => {
 
         let nextCycleMessage = "";
         if (
-          updatedCycleStatus === "completed" &&
-          currentCycleNumber < totalCycles
+          current_cycle_status === 2 && // completed
+          currentCycleNumber < totalCyclesPerGroup
         ) {
           nextCycleMessage = ` Next cycle (${
             currentCycleNumber + 1
           }) will be created on next data submission.`;
+        } else if (
+          current_cycle_status === 2 && // completed
+          currentCycleNumber >= totalCyclesPerGroup
+        ) {
+          nextCycleMessage = ` Group ${cycleGroupNo} completed! Next data submission will start group ${
+            cycleGroupNo + 1
+          } with cycle 1.`;
         }
 
         return res.status(200).json(
           successResponse(
             200,
-            `Equipment movement cycle ${currentCycleNumber} updated successfully.${nextCycleMessage}`,
+            `Equipment movement cycle ${currentCycleNumber} in group ${cycleGroupNo} updated successfully.${nextCycleMessage}`,
             {
               route_id,
               eqp_id,
               cycle: currentCycleNumber,
-              status: updatedCycleStatus,
+              status: current_cycle_status,
               group_no: cycleGroupNo,
-              total_cycles: totalCycles,
-              remaining_cycles: totalCycles - currentCycleNumber,
+              total_cycles: totalCyclesPerGroup,
+              // remaining_cycles_in_group:
+              //   totalCyclesPerGroup - currentCycleNumber,
               existing_data_points: allExistingGPSData.length,
               new_data_points: dataObjects.length,
               total_data_points: combinedGPSData.length,
-              current_data_count: newDataCount,
-              can_create_next:
-                updatedCycleStatus === "completed" &&
-                currentCycleNumber < totalCycles,
+              current_data_count: combinedTotalStored,
+              current_data_col: combinedActiveColumn,
+              can_create_next_cycle:
+                current_cycle_status === 2 && // completed
+                currentCycleNumber < totalCyclesPerGroup,
               updated_on: inserted_on,
             },
             API_CODES.EQUIPMENT_MOVEMENT.CREATE_SUCCESS
