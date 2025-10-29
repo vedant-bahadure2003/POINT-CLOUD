@@ -126,7 +126,9 @@ const getOrCreateGroupNo = async (group_name, route_id, eqp_id) => {
 
     if (existingGroupRows.length > 0) {
       // Group name already exists, return existing group_no
-      console.log(`📋 Found existing group_no ${existingGroupRows[0].group_no} for group_name: ${group_name}`);
+      console.log(
+        `📋 Found existing group_no ${existingGroupRows[0].group_no} for group_name: ${group_name}`
+      );
       return existingGroupRows[0].group_no;
     }
 
@@ -139,8 +141,10 @@ const getOrCreateGroupNo = async (group_name, route_id, eqp_id) => {
     const [maxGroupRows] = await db.execute(maxGroupQuery, [route_id, eqp_id]);
 
     const nextGroupNo = (maxGroupRows[0].max_group_no || 0) + 1;
-    console.log(`🆕 Generated new group_no ${nextGroupNo} for group_name: ${group_name}`);
-    
+    console.log(
+      `🆕 Generated new group_no ${nextGroupNo} for group_name: ${group_name}`
+    );
+
     return nextGroupNo;
   } catch (error) {
     console.error("❌ Error generating group_no:", error);
@@ -511,7 +515,10 @@ const createEquipmentMovement = async (req, res) => {
     }
 
     // Validate numeric fields if provided
-    if (current_data_col && (isNaN(current_data_col) || current_data_col < 1 || current_data_col > 10)) {
+    if (
+      current_data_col &&
+      (isNaN(current_data_col) || current_data_col < 1 || current_data_col > 10)
+    ) {
       return res
         .status(400)
         .json(
@@ -572,7 +579,9 @@ const createEquipmentMovement = async (req, res) => {
     let group_no;
     try {
       group_no = await getOrCreateGroupNo(group_name, route_id, eqp_id);
-      console.log(`🔢 Auto-generated group_no: ${group_no} for group_name: ${group_name}`);
+      console.log(
+        `🔢 Auto-generated group_no: ${group_no} for group_name: ${group_name}`
+      );
     } catch (error) {
       console.error("❌ Error auto-generating group_no:", error);
       return res
@@ -721,7 +730,9 @@ const createEquipmentMovement = async (req, res) => {
     }
     // If user wants to work with the auto-generated group_no, validate it
     else if (group_no) {
-      console.log(`🔍 Using auto-generated group_no: ${group_no}, validating...`);
+      console.log(
+        `🔍 Using auto-generated group_no: ${group_no}, validating...`
+      );
 
       // Check if the specified group already exists and is completed
       const specifiedGroupQuery = `
