@@ -44,7 +44,7 @@ const distributeDataAcrossFields = (dataObjects = []) => {
 
   // Initialize all 10 field_data columns
   for (let i = 1; i <= TOTAL_FIELD_COLUMNS; i++) {
-    fieldData[`field_data${i}`] = null;
+    fieldData[`field_data_${i}`] = null;
   }
 
   if (!Array.isArray(dataObjects) || dataObjects.length === 0) {
@@ -63,7 +63,7 @@ const distributeDataAcrossFields = (dataObjects = []) => {
   for (const obj of dataObjects) {
     // If current field is full, move to next field
     if (objectsInCurrentField >= MAX_OBJECTS_PER_FIELD) {
-      fieldData[`field_data${currentFieldIndex}`] =
+      fieldData[`field_data_${currentFieldIndex}`] =
         JSON.stringify(currentFieldArray);
       currentFieldIndex++;
       currentFieldArray = [];
@@ -90,7 +90,7 @@ const distributeDataAcrossFields = (dataObjects = []) => {
     currentFieldArray.length > 0 &&
     currentFieldIndex <= TOTAL_FIELD_COLUMNS
   ) {
-    fieldData[`field_data${currentFieldIndex}`] =
+    fieldData[`field_data_${currentFieldIndex}`] =
       JSON.stringify(currentFieldArray);
     currentActiveColumn = currentFieldIndex; // Store only the number
   }
@@ -700,7 +700,7 @@ const createEquipmentMovement = async (req, res) => {
 
       // Check if this cycle already exists for the given route_id, eqp_id, and group_no
       const existingCycleQuery = `
-        SELECT cycle, current_cycle_status, group_no FROM equipment_movement_details_all 
+        SELECT cycle, current_cycle_status, group_no FROM equipment_movement_details_all
         WHERE route_id = ? AND eqp_id = ? AND cycle = ? AND group_no = ?
         LIMIT 1
       `;
@@ -877,7 +877,7 @@ const createEquipmentMovement = async (req, res) => {
 
       const insertQuery = `
         INSERT INTO equipment_movement_details_all 
-        (route_id, eqp_id, cycle, current_data_col, current_data_count, start_gps, start_time, end_gps, end_time, group_no, group_name, group_inserted_on, field_data1, field_data2, field_data3, field_data4, field_data5, field_data6, field_data7, field_data8, field_data9, field_data10, current_cycle_status, inserted_on)
+        (route_id, eqp_id, cycle, current_data_col, current_data_count, start_gps, start_time, end_gps, end_time, group_no, group_name, group_inserted_on, field_data_1, field_data_2, field_data_3, field_data_4, field_data_5, field_data_6, field_data_7, field_data_8, field_data_9, field_data_10, current_cycle_status, inserted_on)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
 
@@ -910,16 +910,16 @@ const createEquipmentMovement = async (req, res) => {
         cycleGroupNo,
         group_name || null,
         groupInsertedOn,
-        fieldDataDistribution.field_data1 || null,
-        fieldDataDistribution.field_data2 || null,
-        fieldDataDistribution.field_data3 || null,
-        fieldDataDistribution.field_data4 || null,
-        fieldDataDistribution.field_data5 || null,
-        fieldDataDistribution.field_data6 || null,
-        fieldDataDistribution.field_data7 || null,
-        fieldDataDistribution.field_data8 || null,
-        fieldDataDistribution.field_data9 || null,
-        fieldDataDistribution.field_data10 || null,
+        fieldDataDistribution.field_data_1 || null,
+        fieldDataDistribution.field_data_2 || null,
+        fieldDataDistribution.field_data_3 || null,
+        fieldDataDistribution.field_data_4 || null,
+        fieldDataDistribution.field_data_5 || null,
+        fieldDataDistribution.field_data_6 || null,
+        fieldDataDistribution.field_data_7 || null,
+        fieldDataDistribution.field_data_8 || null,
+        fieldDataDistribution.field_data_9 || null,
+        fieldDataDistribution.field_data_10 || null,
         parseInt(current_cycle_status),
         inserted_on,
       ];
@@ -939,8 +939,8 @@ const createEquipmentMovement = async (req, res) => {
         end_time: cycleEndTime,
         group_no: cycleGroupNo,
         status: current_cycle_status,
-        field_data1_length: fieldDataDistribution.field_data1
-          ? fieldDataDistribution.field_data1.length
+        field_data_1_length: fieldDataDistribution.field_data_1
+          ? fieldDataDistribution.field_data_1.length
           : 0,
       });
 
@@ -1013,8 +1013,8 @@ const createEquipmentMovement = async (req, res) => {
 
       // First, get existing data from the cycle
       const getExistingDataQuery = `
-        SELECT field_data1, field_data2, field_data3, field_data4, field_data5, 
-               field_data6, field_data7, field_data8, field_data9, field_data10,
+        SELECT field_data_1, field_data_2, field_data_3, field_data_4, field_data_5, 
+               field_data_6, field_data_7, field_data_8, field_data_9, field_data_10,
                current_data_count, start_time, end_time, group_no
         FROM equipment_movement_details_all 
         WHERE route_id = ? AND eqp_id = ? AND cycle = ? AND group_no = ?
@@ -1047,7 +1047,7 @@ const createEquipmentMovement = async (req, res) => {
 
       // Extract existing GPS data from all field_data columns
       for (let i = 1; i <= TOTAL_FIELD_COLUMNS; i++) {
-        const fieldKey = `field_data${i}`;
+        const fieldKey = `field_data_${i}`;
         if (existingData[fieldKey]) {
           try {
             const parsedData = JSON.parse(existingData[fieldKey]);
@@ -1105,8 +1105,8 @@ const createEquipmentMovement = async (req, res) => {
       const updateQuery = `
         UPDATE equipment_movement_details_all 
         SET current_data_col = ?, current_data_count = ?, start_time = ?, end_time = ?, 
-            field_data1 = ?, field_data2 = ?, field_data3 = ?, field_data4 = ?, field_data5 = ?, 
-            field_data6 = ?, field_data7 = ?, field_data8 = ?, field_data9 = ?, field_data10 = ?, 
+            field_data_1 = ?, field_data_2 = ?, field_data_3 = ?, field_data_4 = ?, field_data_5 = ?, 
+            field_data_6 = ?, field_data_7 = ?, field_data_8 = ?, field_data_9 = ?, field_data_10 = ?, 
             current_cycle_status = ?, group_name = ?, inserted_on = ?
         WHERE route_id = ? AND eqp_id = ? AND cycle = ? AND group_no = ?
       `;
@@ -1116,16 +1116,16 @@ const createEquipmentMovement = async (req, res) => {
         combinedTotalStored, // Use combined total stored count
         existingStartTime, // Preserve existing start_time
         cycleEndTime, // Set end_time only when completed
-        combinedFieldDataDistribution.field_data1 || null,
-        combinedFieldDataDistribution.field_data2 || null,
-        combinedFieldDataDistribution.field_data3 || null,
-        combinedFieldDataDistribution.field_data4 || null,
-        combinedFieldDataDistribution.field_data5 || null,
-        combinedFieldDataDistribution.field_data6 || null,
-        combinedFieldDataDistribution.field_data7 || null,
-        combinedFieldDataDistribution.field_data8 || null,
-        combinedFieldDataDistribution.field_data9 || null,
-        combinedFieldDataDistribution.field_data10 || null,
+        combinedFieldDataDistribution.field_data_1 || null,
+        combinedFieldDataDistribution.field_data_2 || null,
+        combinedFieldDataDistribution.field_data_3 || null,
+        combinedFieldDataDistribution.field_data_4 || null,
+        combinedFieldDataDistribution.field_data_5 || null,
+        combinedFieldDataDistribution.field_data_6 || null,
+        combinedFieldDataDistribution.field_data_7 || null,
+        combinedFieldDataDistribution.field_data_8 || null,
+        combinedFieldDataDistribution.field_data_9 || null,
+        combinedFieldDataDistribution.field_data_10 || null,
         parseInt(current_cycle_status),
         group_name || null,
         inserted_on,
@@ -1150,8 +1150,8 @@ const createEquipmentMovement = async (req, res) => {
         start_time: existingStartTime,
         end_time: cycleEndTime,
         status: current_cycle_status,
-        field_data1_length: combinedFieldDataDistribution.field_data1
-          ? combinedFieldDataDistribution.field_data1.length
+        field_data_1_length: combinedFieldDataDistribution.field_data_1
+          ? combinedFieldDataDistribution.field_data_1.length
           : 0,
       });
       const [result] = await db.execute(updateQuery, updateParams);

@@ -86,10 +86,10 @@ const startServer = async () => {
 
     // Start the server
     app.listen(PORT, () => {
-      console.log(`🚀 Point Cloud Backend Server is running on port ${PORT}`);
-      console.log(`📍 Server URL: http://localhost:${PORT}`);
-      console.log(`💚 Health check: http://localhost:${PORT}/health`);
-      console.log(`⏰ Started at: ${new Date().toISOString()}`);
+      console.log(`Point Cloud Backend Server is running on port ${PORT}`);
+      console.log(`Server URL: http://localhost:${PORT}`);
+      // console.log(`💚 Health check: http://localhost:${PORT}/health`);
+      // console.log(`⏰ Started at: ${new Date().toISOString()}`);
     });
   } catch (error) {
     console.error("❌ Failed to start server:", error);
